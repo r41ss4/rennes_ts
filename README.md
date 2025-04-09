@@ -11,23 +11,23 @@ Our approach combines traditional statistical methods (SARIMA model) with machin
 * **[Zhiying LIU](linkedin.com/in/芷颖-刘-a07146329)**
 
 ## The Dataset
-The dataset contains detailed ATM transaction records obtained from [source - specify if available]. Key features include:
-- `transaction_date`: Date of each transaction
-- `No_Of_Withdrawals`: Number of withdrawals per transaction
-- `total_amount_withdrawn`: Total cash withdrawn
-- `weekday`: Day of the week
-- `working_day`: Business day indicator (H=Holiday, W=Working day)
+The dataset contains detailed ATM transaction records obtained from **[Exploratory_Data_Analysis-on-ATM_transaction-dataset by Maheen Amin](https://github.com/maheenamin9/atm-transaction-eda)**. It includes 10434 rows and 9 columns, as the column `atm_name` was drop for the analysis. Key columns include include:        
+* `transaction_date`: Date of each transaction
+* `No_Of_Withdrawals`: Number of withdrawals per transaction
+* `total_amount_withdrawn`: Total cash withdrawn
+* `weekday`: Day of the week
+* `working_day`: Business day indicator (H=Holiday, W=Working day)
+
 
 ## Project Structure
 ```
 rennes_ts/          
 │           
 ├── data/         
-│   ├── atm bank dataset.csv                        
 │   └── atm_transactions.csv        
 │                       
 ├── notebooks/                     
-│   └── atm_transactions.R                
+│   └── ts_analysis.Rmd                
 │       
 ├── Insights.md               
 └── README.md          
