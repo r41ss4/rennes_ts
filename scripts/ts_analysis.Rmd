@@ -1,0 +1,858 @@
+---
+title: "Time Series & ATM Cash Demand Forecasting"
+output:
+  pdf_document: default
+  html_document: default
+date: "2025"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+---
+# Time Series & ATM Cash Demand Forecasting
+---
+
+The project focuses on forecasting ATM cash demand using time series analysis to ensure optimal cash management and minimize operational costs. Historical ATM withdrawal data is analyzed to predict future cash requirements, employing three main models: SARIMA, Prophet, and Artificial Neural Networks (ANN). The SARIMA and Prophet models were recommended by the professor due to their robustness in handling seasonality and trend components in time series data. The ANN model was selected based on the insights from the report "ATM Cash Prediction Using Time Series Approach" by M. Rafi, M. Taha, M. Bilal, and H. Raza, which highlights the effectiveness of neural networks in capturing complex patterns in financial data.
+
+The SARIMA model is particularly useful for datasets with seasonal patterns, while the Prophet model, developed by Facebook, is known for its flexibility and ease of use in handling missing data and outliers. The ANN model, consisting of interconnected layers of neurons, excels in learning intricate patterns from the data. By comparing the performance of these models, the project aims to identify the most accurate and reliable method for forecasting ATM cash demand. This comprehensive approach ensures that the predictions are robust and can effectively support decision-making processes in cash management.
+
+```{r}
+# Install pacman package
+install.packages("pacman")
+```
+
+```{r}
+# Use pacman to handle other libraries
+pacman::p_load(prophet, tidyverse, lubridate, imputeTS, ggplot2, forecast) #, VIM)
+```
+
+```{r}
+# Load necessary libraries
+library(tidyverse)
+library(lubridate)
+library(imputeTS)
+library(ggplot2)
+library(forecast)
+library(dplyr)
+library(lubridate)
+```
+
+---
+# 1. Data Cleaning & Time Series Preparation
+---
+
+---
+## 1.1. Load the dataset
+---
+
+The dataset containing ATM transaction data is loaded from a CSV file hosted on GitHub. This step involves reading the data into a DataFrame and displaying the first few rows to understand its structure.
+
+```{r}
+# Load the csv file from gitHub
+url <- "https://raw.githubusercontent.com/r41ss4/rennes_ts/refs/heads/main/data/atm_transactions.csv"
+# Real file from github
+df <- read.csv(url)
+# Display the first few rows of the dataset
+head(df)
+```
+
+---
+## 1.2. Basic Data Exploration: Review dataset
+---
+
+Basic information about the dataset is reviewed, including the structure and summary statistics of numerical columns. This helps in understanding the distribution and range of the data.
+
+```{r}
+# Show basic information about the dataset
+str(df)
+```
+
+```{r}
+# Show statistics for numerical columns
+summary(df)
+```
+
+```{r}
+# Create a summary of missing values
+missing_summary <- df %>%
+  summarise(across(everything(), ~ sum(is.na(.)))) %>%
+  pivot_longer(everything(), names_to = "variable", values_to = "missing_count")
+```
+
+```{r}
+# View the result
+print(missing_summary)
+```
+
+```{r}
+# Review 'trans_date_set'
+str(df$trans_date_set)
+head(df$trans_date_set)
+```
+
+```{r}
+# Review changes
+df
+```
+
+```{r}
+# Re arrange df by date
+df <- df %>% arrange(transaction_date)
+```
+
+```{r}
+# Review changes
+df
+```
+
+```{r}
+# Review min date
+min(df$transaction_date)
+```
+
+```{r}
+# Review max date
+max(df$transaction_date)
+```
+
+```{r}
+# Convert transaction_date to Date type
+df$transaction_date <- as.Date(df$transaction_date, format="%d/%m/%Y")
+```
+
+```{r}
+# Extract year and month from transaction_date
+df <- df %>%
+  mutate(trans_year = format(transaction_date, "%Y"),
+         trans_month = format(transaction_date, "%m"),
+         trans_day = format(transaction_date, "%d"))
+```
+
+```{r}
+# View the modified DataFrame
+head(df)
+```
+```{r}
+# Detect and handle outliers
+# Define Q1
+Q1 <- quantile(df$total_amount_withdrawn, 0.25)
+# Define Q3
+Q3 <- quantile(df$total_amount_withdrawn, 0.75)
+# Calculate IQR as the difference
+IQR <- Q3 - Q1
+# Calculate lower_bound
+lower_bound <- Q1 - 1.5 * IQR
+# Calculate upper_bound
+upper_bound <- Q3 + 1.5 * IQR
+```
+
+```{r}
+# Create a boxplot of 'total_amount_withdrawn'
+ggplot(df, aes(y = total_amount_withdrawn)) +
+  geom_boxplot(outlier.colour = "red", outlier.shape = 16, outlier.size = 2) +
+  geom_hline(yintercept = lower_bound, linetype = "dashed", color = "blue") +
+  geom_hline(yintercept = upper_bound, linetype = "dashed", color = "blue") +
+  labs(title = "Boxplot of Total Amount Withdrawn",
+       y = "Total Amount Withdrawn") +
+  theme_minimal()
+```
+
+---
+## 1.3. Convert data into appropriate time series format
+---
+
+Convert date transactions into date type, and additional columns for year, month, and day are extracted. Moreover, data is aggregated to a monthly frequency to simplify the time series analysis. This involves summing the total amount withdrawn for each month. The aggregated data is then transform into a time series format.
+
+```{r}
+# Aggregate data to monthly frequency
+monthly_data <- df %>%
+  group_by(year = trans_year, month = trans_month) %>%
+  summarise(total_amount_withdrawn = sum(total_amount_withdrawn, na.rm = TRUE), .groups = 'drop')
+```
+
+```{r}
+# Review result
+monthly_data
+```
+
+```{r}
+# Check for missing values in 'year' and 'month' columns
+print(sum(is.na(monthly_data$year)))
+print(sum(is.na(monthly_data$month)))
+```
+
+```{r}
+# Ensure there are no missing values in 'year' and 'month' columns
+monthly_data <- monthly_data %>%
+  filter(!is.na(year) & !is.na(month))
+```
+
+```{r}
+# Check for missing values in 'year' and 'month' columns
+print(sum(is.na(monthly_data$year)))
+print(sum(is.na(monthly_data$month)))
+```
+
+```{r}
+# Review monthly_data
+head(monthly_data)
+```
+
+```{r}
+# Check if data exists before creating time series
+if (nrow(monthly_data) > 1) {
+  ts_data <- ts(monthly_data$total_amount_withdrawn,
+                start = c(min(monthly_data$year), min(monthly_data$month)),
+                frequency = 12)
+} else {
+  print("Error: Not enough observations for time series analysis.")
+}
+```
+
+```{r}
+# Convert data into a time series format
+ts_data <- ts(monthly_data$total_amount_withdrawn,
+              start = c(as.integer(min(monthly_data$year)),
+                       as.integer(min(monthly_data$month))),
+              frequency = 12)
+```
+
+```{r}
+# Print the time series data to verify
+print(ts_data)
+```
+
+```{r}
+# Visualize the dataset to understand trends, seasonality, and noise
+# Set plot size
+options(repr.plot.width = 20, repr.plot.height = 10)
+# Plot
+autoplot(ts_data) +
+  ggtitle("Total Amount Withdrawn Over Time") +
+  xlab("Year") +
+  ylab("Amount Withdrawn") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=16, face="bold", hjust=0.5),
+    axis.title = element_text(size=12)
+  )
+```
+
+```{r}
+# Drop year 2016 due to outlier 11/2016 and 12/2016
+monthly_data <- monthly_data %>%
+  filter(year != 2016)
+```
+
+```{r}
+# Review result
+monthly_data
+```
+
+```{r}
+# Convert data into a time series format
+ts_data <- ts(monthly_data$total_amount_withdrawn,
+              start = c(as.integer(min(monthly_data$year)),
+                       as.integer(min(monthly_data$month))),
+              frequency = 12)
+```
+
+```{r}
+# Print the time series data to verify
+print(ts_data)
+```
+
+```{r}
+# Visualize the dataset to understand trends, seasonality, and noise
+# Set plot size
+options(repr.plot.width = 20, repr.plot.height = 10)
+# Plot
+autoplot(ts_data) +
+  ggtitle("Total Amount Withdrawn Over Time") +
+  xlab("Year") +
+  ylab("Amount Withdrawn") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=16, face="bold", hjust=0.5),
+    axis.title = element_text(size=12)
+  )
+
+```
+
+---
+## 1.4. Visualize the dataset to understand trends, seasonality and noise
+---
+
+The dataset is visualized using line plots to observe the total amount withdrawn over time. This visualization helps in detecting any long-term trends, such as increasing or decreasing withdrawal amounts, as well as seasonal patterns that repeat at regular intervals.
+
+```{r}
+# Visualize the dataset to understand trends, seasonality, and noise
+# Set plot size
+options(repr.plot.width = 20, repr.plot.height = 10)
+# Plot
+autoplot(ts_data) +
+  ggtitle("Total Amount Withdrawn Over Time") +
+  xlab("Year") +
+  ylab("Amount Withdrawn") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=16, face="bold", hjust=0.5),
+    axis.title = element_text(size=12)
+  )
+```
+
+```{r}
+# Decompose the time series to understand trends, seasonality, and noise
+decomposed_data <- decompose(ts_data)
+```
+
+```{r}
+# Visualize the dataset to understand trends, seasonality, and noise
+# Set plot size
+options(repr.plot.width = 20, repr.plot.height = 10)
+```
+
+```{r}
+# Decompose the time series to understand trends, seasonality, and noise
+decomposed_data <- decompose(ts_data)
+autoplot(decomposed_data) +
+  ggtitle("Total Amount Withdrawn Over Time & Time Series elements") +
+  xlab("Time") +
+  ylab("Total Amount Withdrawn") +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(hjust = 0.5, size = 16, face = "bold"),
+    axis.title.x = element_text(size = 14),
+    axis.title.y = element_text(size = 14),
+    axis.text.x = element_text(size = 12),
+    axis.text.y = element_text(size = 12),
+    panel.grid.major = element_line(color = "gray80"),
+    panel.grid.minor = element_blank(),
+    panel.background = element_rect(fill = "gray95"),
+    plot.margin = unit(c(1, 1, 1, 1), "cm")
+  )
+
+```
+
+---
+# 2. Forecasting Model
+---
+
+This section focuses on selecting and applying various forecasting models to predict ATM cash demand. The goal is to identify the most accurate and reliable model for making future cash withdrawal predictions.
+
+---
+## 2.1. Choose for Forecasting Model
+---
+
+In time series analysis, different models have varying strengths and are suited to different types of data patterns. In this project, three main models are considered: Seasonal ARIMA (SARIMA), Prophet, and Artificial Neural Networks (ANN). Each model is chosen based on its ability to handle specific characteristics of the dataset, such as seasonality, trend, and non-linearity.
+
+---
+## 2.1.1. Model Seasonal ARIMA (SARIMA)
+---
+The Seasonal ARIMA (SARIMA) model is selected for its robustness in handling datasets with both seasonal and non-seasonal components. SARIMA extends the ARIMA model by incorporating seasonal differencing, which is essential for datasets exhibiting regular seasonal patterns. 
+
+The model is trained on the transformed data to ensure stationarity, and its performance is evaluated using various accuracy metrics. Such model requieres the dataset to be stationary. Moreover, a stationary dataset is one where the mean, variance and autocorrelation structure do not change over time. Therefore, the data must first be manipulated to become stationary. In this case, the SARIMA analysis starts knowing that the dataset has seasonality and trend. However, this can be checked in multiple ways, such as by applying KPSS test and/or ADC Test.
+
+---
+### 2.1.1.1. Dataset & Stationary status
+---
+The SARIMA model requires the data to be stationary. Therefore, it is needed to manipulate the time series data until making in stationary to proceed with the SARIMA application for forecasting. 
+
+```{r}
+# Import libs
+install.packages("tseries")
+library(forecast)
+library(tseries)
+library(urca) # for kpss test
+```
+
+```{r}
+# Plot time series
+autoplot(ts_data) +
+  labs(
+    title = "Total Amount Withdrawn Over Time",
+    x = "Year",
+    y = "Amount Withdrawn"
+  ) +
+  theme_minimal() +
+  theme(
+    plot.title = element_text(size=16, face="bold", hjust=0.5),
+    axis.title.x = element_text(size=14),
+    axis.title.y = element_text(size=14),
+    panel.grid.major = element_line(color="gray80"),
+    plot.margin = unit(c(1,1,1,1), "cm")
+  )
+```
+
+```{r}
+# conduct ADF test (Augmented Dickey-Fuller Test）
+adf.test(ts_data)
+```
+
+```{r}
+# Summarize data log
+summary(ur.kpss(ts_data))
+```
+
+---  
+#### 2.1.1.2. Stationary process with log()
+---
+Non-stationary data can be transformed using log transformation and differencing. The difference of the logarithmic version of the dataset, will be the range of variation (bigger) in the original one. Once again, stationarity tests such as the Augmented Dickey-Fuller (ADF) test and KPSS test are conducted to check if the time series is stationary.
+
+```{r}
+# Apply the log transformation to dataset
+log_data <- log(ts_data)
+# Plot the new log_data
+log_data %>% autoplot() + ggtitle("Log-Transformed Time Series")
+```
+
+```{r}
+# conduct ADF test (Augmented Dickey-Fuller Test）
+adf.test(log_data)
+```
+
+```{r}
+# Summarize data log
+summary(ur.kpss(log_data))
+```
+
+---
+#### 2.1.1.3. First Order Differentiator
+---
+
+The first order differencing is applied to the time series data to achieve stationarity. This technique involves subtracting the previous observation from the current observation, effectively removing trends and making the data stationary.
+
+```{r}
+# Apply first order differenciator to log_data
+diff_data <- diff(log_data, differences=1)
+plot(diff_data, main="Differenced ATM Cash Withdrawals")
+```
+
+```{r}
+# ADF test over diff_data
+adf.test(diff_data)
+```
+
+```{r}
+# Summarize data log
+summary(ur.kpss(diff_data))
+```
+
+---
+#### 1.1.2.4. Application of SARIMA (Seasonal ARIMA)
+---
+
+Once the data is stationary, it is possible to move forward with teh application of the SARIMA model and the forecast process. The SARIMA model is trained on the transformed data and the model's residuals are checked to ensure it fits well. Then, forecasts are generated for the test period, and the results are visualized. Futhermore, the accuracy of the SARIMA model is evaluated using metrics such as RMSE and MAPE. This helps in assessing the model's performance.
+
+```{r}
+# Number of forecasts to generate
+h <- 12
+# Length of time series
+n <- length(diff_data)
+```
+
+```{r}
+# Determine split point use 80% for training
+train_sarima_s <- floor(0.8 * n)
+train_end <- time(diff_data)[train_sarima_s]
+test_start <- time(diff_data)[train_sarima_s + 1]
+test_end <- time(diff_data)[n]
+```
+
+```{r}
+# Create windows for train and test
+train_sarima <- window(diff_data, end = train_end)
+test_sarima <- window(diff_data, start = test_start, end = test_end)
+```
+
+```{r}
+# Apply the SARIMA model
+sarima_model <- auto.arima(train_sarima, seasonal=TRUE)
+summary(sarima_model)
+```
+
+```{r}
+# Check the residual
+checkresiduals(sarima_model)
+```
+```{r}
+# Forecast with Sarima
+forecast_sarima <- forecast(sarima_model, h=length(test_sarima))
+```
+
+```{r}
+# Plot Sarima Forecast
+autoplot(train_sarima, series = "Actual (Train)") +
+  autolayer(test_sarima, series = "Actual (Test)") +
+  autolayer(forecast_sarima$mean, series = "SARIMA Forecast") +
+  autolayer(forecast_sarima, PI = TRUE, fill = "#4682B4", alpha = 0.4) +  
+  ggtitle("ATM Cash Demand Forecast - SARIMA (Actual vs. Predicted)") +
+  xlab("Year") +
+  ylab("Predicted Withdrawals") +
+  scale_color_manual(
+    values = c(
+      "Actual (Train)" = "black",
+      "Actual (Test)" = "blue",
+      "SARIMA Forecast" = "red"
+    ),
+    name = "Legend"
+  ) +
+  theme_minimal()
+```
+
+```{r}
+# Review model accuracy
+sarima_acu <- accuracy(sarima_model)
+# Show accuracy
+sarima_acu
+```
+
+```{r}
+# Review forecasting accuracy
+sar_acu <- accuracy(forecast_sarima, test_sarima)
+# Show accuracy
+sar_acu
+```
+
+---
+## 2.1.2. Model Prophet
+---
+
+The Prophet model, developed by Facebook, is selected for its flexibility and robustness in handling time series data with missing values and outliers. Prophet's ability to incorporate seasonality and trend components makes it a valuable tool for predicting ATM cash demand
+
+```{r}
+# Import libs
+library(prophet)
+```
+
+```{r}
+# Mutate monthly data to have ds as the first day of each month
+monthly_prophet <- df %>%
+  mutate(month = floor_date(transaction_date, "month")) %>%
+  group_by(month) %>%
+  summarise(y = sum(total_amount_withdrawn)) %>%
+  rename(ds = month)
+# View result
+monthly_prophet
+```
+
+```{r}
+# Convert your date boundaries to Prophet format
+train_end <- as.Date("2015-06-01")
+test_start <- as.Date("2015-07-01")
+```
+
+```{r}
+# Split data (no window() needed - Prophet uses data frames)
+train_prophet <- monthly_prophet %>% filter(ds <= train_end)
+test_prophet <- monthly_prophet %>% filter(ds >= test_start)
+```
+
+```{r}
+# Apply prophet
+prophet_model <- prophet(train_prophet, yearly.seasonality = TRUE, weekly.seasonality = FALSE, daily.seasonality = FALSE)
+# View model
+summary(prophet_model)
+```
+
+```{r}
+# Create future dataframe for test period
+prophet_future <- data.frame(ds = test_prophet$ds)
+```
+
+```{r}
+# Generate forecasts
+prophet_forecast <- predict(prophet_model, prophet_future)
+# Review forecast
+prophet_forecast
+```
+
+```{r}
+# Make copy for manipulation and plotting
+prophet_forecast1 <- prophet_forecast
+test_prophet1 <- test_prophet
+monthly_prophet1 <- monthly_prophet
+```
+
+```{r}
+# Convert dates to proper Date format
+prophet_forecast1$ds <- as.Date(prophet_forecast1$ds)
+test_prophet1$ds <- as.Date(test_prophet1$ds)
+monthly_prophet1$ds <- as.Date(monthly_prophet1$ds)
+```
+
+```{r}
+# Plot Prophet
+ggplot() +
+  # Uncertainty ribbon (bottom layer)
+  geom_ribbon(data = prophet_forecast1,
+    aes(x = ds, ymin = yhat_lower, ymax = yhat_upper, fill = "95% Confidence"),
+    alpha = 0.2) +
+  # Training data
+  geom_line(data = monthly_prophet1,
+    aes(x = ds, y = y, color = "Training Data"),
+    linewidth = 1) +
+  # Test data
+  geom_line(data = test_prophet1,
+    aes(x = ds, y = y, color = "Test Actuals"),
+    linewidth = 1) +
+  # Forecast line
+  geom_line(data = prophet_forecast1,
+    aes(x = ds, y = yhat, color = "Forecast"),
+    linewidth = 1,
+    linetype = 1) +
+  # Color and fill scales
+  scale_color_manual(name = NULL,
+    values = c("Training Data" = "black",
+      "Test Actuals" = "green",
+      "Forecast" = "blue"),
+    guide = guide_legend(override.aes = list(
+        linetype = c("solid", "solid", "dashed"),
+        shape = c(NA, NA, NA)))) +
+  scale_fill_manual(name = NULL,
+    values = c("95% Confidence" = "blue")) +
+  # Labels and theme
+  labs(title = "ATM Cash Demand Forecast",
+    x = "Year",
+    y = "Amount Withdrawn") +
+  scale_x_date(date_labels = "%Y", date_breaks = "1 year") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, face = "bold", size = 14)) +
+  guides(color = guide_legend(order = 1),
+    fill = guide_legend(order = 2))
+```
+
+```{r}
+# Measure Accuracy of Prophet forecast
+# Create a dataframe with actual vs predicted values
+prophet_results <- data.frame(
+  ds = test_prophet1$ds,
+  y = test_prophet1$y,
+  yhat = prophet_forecast1$yhat[prophet_forecast1$ds %in% test_prophet1$ds]  # Match test dates
+)
+```
+
+```{r}
+# Calculate basic metrics manually (simple and transparent)
+prophet_metrics <- prophet_results %>%
+  summarise(
+    MAE = mean(abs(y - yhat)),          # Mean Absolute Error
+    RMSE = sqrt(mean((y - yhat)^2)),    # Root Mean Squared Error
+    MAPE = mean(abs((y - yhat)/y))*100, # Mean Absolute Percentage Error
+    R2 = cor(y, yhat)^2                 # R-squared
+  )
+```
+
+```{r}
+# View the metrics
+prophet_metrics
+```
+
+---
+## 2.1.3. Model Artificial Neural Network (ANN)
+---
+
+The Artificial Neural Network (ANN) model is chosen based on its capability to learn complex patterns from data.The ANN consists of layers of interconnected nodes (called neurons) that work together to learn patterns from data. Once trained, the network is suppossed to make a prediction and compare it to the correct output, while adjust its weights and biases to reduce the error.
+
+```{r}
+# Import libs
+install.packages("nnet")
+library(nnet)
+```
+
+```{r}
+# Number of forecasts to generate
+h <- 12
+# Length of time series
+n <- length(diff_data)
+# Lag order (auto-reduced if needed)
+p <- 7
+# Training cutoff index
+train_ann_s <- n - h
+```
+
+```{r}
+# Determine split point use 80% for training
+train_ann_s <- floor(0.8 * length(diff_data))
+```
+
+```{r}
+# Time indices for train and test
+train_end <- time(diff_data)[train_ann_s]
+test_start <- time(diff_data)[train_ann_s + 1]
+test_end <- time(diff_data)[n]
+```
+
+```{r}
+# Create windows for train and test
+train_ann <- window(diff_data, end = train_end)
+test_ann <- window(diff_data, start = test_start, end = test_end)
+```
+
+```{r}
+# Let nnetar() handle normalization internally
+safe_p <- min(p, floor(length(train_ann)/3))
+ann_model <- nnetar(train_ann,
+                   p = safe_p,
+                   size = 10,
+                   repeats = 20,
+                   scale.inputs = TRUE)       # Auto-scaling
+```
+
+```{r}
+# Forecast short-term
+ann_forecast <- forecast(ann_model, h = h, level = c(80, 95))
+```
+
+```{r}
+# Evaluate accuracy test
+test_ann_accuracy <- accuracy(ann_forecast, test_ann)
+# Show
+test_ann_accuracy
+```
+
+```{r}
+# Evaluate accuracy training
+train_ann_accuracy <- accuracy(ann_model)
+# Show
+train_ann_accuracy
+```
+
+```{r}
+# Check residuals
+checkresiduals(ann_model)
+```
+
+```{r}
+# Plot ANN forecast
+autoplot(ann_forecast,
+         series = "ANN Forecast",
+         PI = TRUE,
+         fill = "blue",
+         alpha = 0.4,
+         linetype = 0,
+         level = c(80, 95)
+) +
+autolayer(test_ann, series = "Actual", color = "green", size = 1) +
+ggtitle("ANN Forecast vs Actual") +
+xlab("Time") +
+ylab("Value") +
+scale_color_manual(
+  name = "Legend",
+  values = c("ANN Forecast" = "blue", "Actual" = "green")
+) +
+theme_minimal(base_size = 12) +
+theme(legend.position = "bottom")
+
+# Review accuracy
+ann_acu <- accuracy(ann_model)
+# Review
+ann_acu
+```
+
+---
+## 3. Model performance error metrics (RMSE, MAPE)
+---
+
+Evaluating model performance is essential to determine the accuracy and reliability of the forecasts. Two key metrics used in this project are Root Mean Square Error (RMSE) and Mean Absolute Percentage Error (MAPE). RMSE measures the average magnitude of the forecast errors, providing a clear indication of the model's accuracy. MAPE, on the other hand, expresses the forecast error as a percentage of the actual values, making it easier to interpret the model's performance in relative terms. These metrics are calculated for each model to compare their effectiveness in predicting ATM cash demand.
+
+```{r}
+# Review the accuracy of each model
+str(ann_acu)
+str(sarima_acu)
+str(prophet_metrics)
+```
+
+```{r}
+# Standarize columns of each accuracy dataframe
+common_cols <- intersect(colnames(ann_acu), intersect(colnames(sarima_acu), colnames(prophet_metrics)))
+ann_acu <- ann_acu[, common_cols]
+sarima_acu <- sarima_acu[, common_cols]
+prophet_metrics <- prophet_metrics[, common_cols]
+```
+
+```{r}
+# Assign each model accuracy the model name too in column Model
+ann_acu$Model <- "ANN"
+sarima_acu$Model <- "SARIMA"
+prophet_metrics$Model <- "Prophet"
+```
+
+```{r}
+# Combine columns into one dataframe related to accuracy
+combined_accuracy <- bind_rows(ann_acu, sarima_acu, prophet_metrics)
+combined_accuracy
+```
+
+---
+### 3.1. RMSE & MAPE Comparation
+---
+
+The RMSE and MAPE values for the SARIMA, Prophet, and ANN models are compared to identify the most accurate forecasting method. Bar plots are created to visualize the RMSE and MAPE values for each model, highlighting their performance differences. The visual representation of these metrics helps in making an informed decision about the best model for forecasting ATM cash demand.
+
+
+
+```{r}
+# Plot RMSE
+rmse_plot <- ggplot(combined_accuracy, aes(x = Model, y = RMSE, fill = Model)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = round(RMSE, 2)), vjust = -0.5) +
+  labs(title = "RMSE Comparison",
+       y = "RMSE Value",
+       x = "Model") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+# Show graphic
+rmse_plot
+```
+
+```{r}
+# Plot MAPE
+mape_plot <- ggplot(combined_accuracy, aes(x = Model, y = MAPE, fill = Model)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  geom_text(aes(label = paste0(round(MAPE, 2), "%")), vjust = -0.5) +
+  labs(title = "MAPE Comparison",
+       y = "MAPE Value (%)",
+       x = "Model") +
+  theme_minimal() +
+  theme(plot.title = element_text(hjust = 0.5, size = 14, face = "bold"))
+
+# Show graphic
+mape_plot
+```
+
+```{r}
+# Import libs
+install.packages("gridExtra")
+library(gridExtra)
+```
+
+```{r}
+# Display both plots side by side
+grid.arrange(rmse_plot, mape_plot, ncol = 2)
+```
+
+---
+### 3.2. Model error metrics
+---
+
+---
+#### 3.2.1. Model error metrics: Highlights
+---
+
+* RMSE (Root Mean Square Error)：SARIMA and Prophet have very large errors, while ANN has almost zero error, indicating that ANN is more accurate.
+
+* MAPE (Mean Percent Error)：SARIMA is as high as 110.36%, while Prophet is even worse (1869.41%), which means that their predictions are very biased. But ANN is only 0.17%, indicating that it has very low error.
+
+* ACF1 (Autocorrelation Function): SARIMA has a slight advantage in ACF1 (-0.1005 vs -0.3480), but this is far from enough to make up for its high error.
+
+---
+#### 3.2.2. Model error metrics: Conclusions
+---
+
+The results of the model performance evaluation show that the ANN model outperforms both the SARIMA and Prophet models in terms of RMSE and MAPE. The ANN model's ability to capture complex patterns and non-linear relationships in the data results in more accurate forecasts. The SARIMA and Prophet models, while effective in handling seasonality and trend components, exhibit higher error metrics, making them less reliable for this specific dataset. Based on these results, the ANN model is selected as the best option for forecasting ATM cash demand, ensuring robust and accurate predictions.
+
+

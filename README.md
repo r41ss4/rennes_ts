@@ -26,7 +26,7 @@ rennes_ts/
 ├── data/         
 │   └── atm_transactions.csv        
 │                       
-├── notebooks/                     
+├── scripts/                     
 │   └── ts_analysis.Rmd                
 │       
 ├── Insights.md               
