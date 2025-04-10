@@ -3,6 +3,10 @@ This project for Time Series Analysis at Rennes School of Business aims to forec
 
 Our approach combines traditional statistical methods (SARIMA model) with machine learning techniques (ANN model) to identify patterns in daily/weekly cash withdrawals; compare manual and automated time series modeling approaches; and provide actionable insights for ATM cash replenishment. The collaborative effort among our team of 5 university students leverages our combined expertise in time series analysis, programming, and financial analytics to address the key question: "How can we accurately forecast ATM cash demand to optimize operational efficiency?"
 
+The team originally worked using **[Google Colab with an R Kernel](https://colab.research.google.com/drive/1H9RPuwoMz6UycelYOxTnKf2mEtVKSxhs#scrollTo=OEKnMRZ1Umsn)**. The platform was chosen for its collaborative features, which allowed team members to work simultaneously on the code, share insights in real-time, and leverage the cloud-based environment for computational tasks.      
+
+However, as the project progressed, and current complications were found while using R in Google Colab, the need for a more structured and reproducible format became apparent. To address it, the final script was transitioned to an .Rmd (R Markdown) format. The decision was made to enhance the practicality and usability of the script.     
+
 ## Team Members
 * **[Li Bei](www.linkedin.com/in/bei-li-8484a6337)**
 * **[Jiahui Zhong](linkedin.com/in/jiahui-zhong-2a8924328)**
